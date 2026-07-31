@@ -434,7 +434,7 @@ const defaultRecords = [];
     function renderMainTable() {
         const filtered = filterRecords(state.records);
         mainTableBody.innerHTML = filtered.length ? filtered.map((r, idx) => createTableRowHTML(r, idx + 1)).join('') : `
-            <tr><td colspan="10" style="text-align:center; padding: 32px; color: var(--text-muted);">Koyi record nahi mila. Filters reset karein ya nayi entry add karein.</td></tr>
+            <tr><td colspan="11" style="text-align:center; padding: 32px; color: var(--text-muted);">Koyi record nahi mila. Filters reset karein ya nayi entry add karein.</td></tr>
         `;
     }
 
@@ -446,17 +446,25 @@ const defaultRecords = [];
             day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
         });
 
-        return `
-            <tr>
-                <td><strong>${index ? '#' + index : record.id}</strong><br><small class="text-muted">${formattedDate}</small></td>
+        const identityCells = index
+            ? `<td><strong>#${index}</strong></td>
+                <td><small class="text-muted">${formattedDate}</small></td>
+                <td><strong>${escapeHTML(record.custName)}</strong></td>
+                <td>📞 ${escapeHTML(record.custMobile)}</td>`
+            : `<td><small class="text-muted">${formattedDate}</small></td>
                 <td>
                     <strong>${escapeHTML(record.custName)}</strong><br>
-                    <small class="text-muted">📞 ${record.custMobile}</small>
-                </td>
+                    <small class="text-muted">📞 ${escapeHTML(record.custMobile)}</small>
+                </td>`;
+
+        return `
+            <tr>
+                ${identityCells}
                 <td><code>${escapeHTML(record.aadhaarNumber || 'N/A')}</code></td>
                 <td><span class="person-tag">${escapeHTML(record.serviceType)}</span></td>
                 <td><span class="person-tag">🏪 ${escapeHTML(retName)}</span></td>
                 <td><span class="person-tag">👤 ${escapeHTML(opName)}</span></td>
+                ${index ? `<td>${getPaymentBadgeHTML(record)}</td>` : ''}
                 <td>${statusBadge}</td>
                 <td>
                     <div class="action-btns">
@@ -468,6 +476,9 @@ const defaultRecords = [];
                         </button>
                         <button class="icon-action" onclick="app.editRecord('${record.id}')" title="Edit Entry">
                             ✏️
+                        </button>
+                        <button class="icon-action" onclick="app.togglePayment('${record.id}')" title="Payment Paid / Unpaid">
+                            💰
                         </button>
                         <button class="icon-action" onclick="app.deleteRecord('${record.id}')" title="Delete">
                             🗑️
@@ -489,11 +500,31 @@ const defaultRecords = [];
         return status;
     }
 
+    function getRecordAmount(record) {
+        const amount = Number(record.amount);
+        return isNaN(amount) ? 0 : amount;
+    }
+
+    function formatAmount(amount) {
+        return '₹' + Number(amount || 0).toLocaleString('hi-IN');
+    }
+
+    function getPaymentBadgeHTML(record) {
+        const amount = getRecordAmount(record);
+        if (!amount) return '<span class="text-muted">—</span>';
+        const isPaid = record.paymentStatus === 'PAID';
+        return `<strong>${formatAmount(amount)}</strong><br>
+            <span class="status-badge ${isPaid ? 'success' : 'pending'}">${isPaid ? '✅ Paid' : '⏳ Unpaid'}</span>`;
+    }
+
     function renderOperatorsGrid() {
         const grid = document.getElementById('operatorsGrid');
         grid.innerHTML = state.operators.map(op => {
             const opRecords = state.records.filter(r => r.operatorId === op.id);
             const successCount = opRecords.filter(r => r.status === 'SUCCESS').length;
+            const totalAmount = opRecords.reduce((sum, r) => sum + getRecordAmount(r), 0);
+            const paidAmount = opRecords.filter(r => r.paymentStatus === 'PAID').reduce((sum, r) => sum + getRecordAmount(r), 0);
+            const dueAmount = totalAmount - paidAmount;
 
             return `
                 <div class="person-card">
@@ -512,6 +543,18 @@ const defaultRecords = [];
                         <div class="p-stat">
                             <span>Success Slips</span>
                             <h4 class="success-text">${successCount}</h4>
+                        </div>
+                        <div class="p-stat">
+                            <span>Total Payment</span>
+                            <h4>${formatAmount(totalAmount)}</h4>
+                        </div>
+                        <div class="p-stat">
+                            <span>Paid</span>
+                            <h4 class="success-text">${formatAmount(paidAmount)}</h4>
+                        </div>
+                        <div class="p-stat">
+                            <span>Baaki (Due)</span>
+                            <h4 class="danger-text">${formatAmount(dueAmount)}</h4>
                         </div>
                     </div>
                     <div style="margin-top: 14px; text-align: right;">
@@ -596,6 +639,8 @@ const defaultRecords = [];
         const rejectReason = document.getElementById('rejectReason');
         const rejectReasonGroup = document.getElementById('rejectReasonGroup');
         const entryNotes = document.getElementById('entryNotes');
+        const entryAmount = document.getElementById('entryAmount');
+        const entryPaymentStatus = document.getElementById('entryPaymentStatus');
 
         if (editRecord) {
             modalTitle.textContent = 'Aadhaar Record Edit Karein';
@@ -610,6 +655,8 @@ const defaultRecords = [];
             rejectReason.value = editRecord.rejectReason || '';
             rejectReasonGroup.style.display = editRecord.status === 'REJECTED' ? 'block' : 'none';
             entryNotes.value = editRecord.notes || '';
+            entryAmount.value = getRecordAmount(editRecord) || '';
+            entryPaymentStatus.value = editRecord.paymentStatus === 'PAID' ? 'PAID' : 'UNPAID';
         } else {
             modalTitle.textContent = 'Nayi Aadhaar Entry / Slip Request Add Karein';
             entryForm.reset();
@@ -633,6 +680,8 @@ const defaultRecords = [];
         const status = document.getElementById('entryStatus').value;
         const rejectReason = document.getElementById('rejectReason').value.trim();
         const notes = document.getElementById('entryNotes').value.trim();
+        const amount = Number(document.getElementById('entryAmount').value) || 0;
+        const paymentStatus = document.getElementById('entryPaymentStatus').value;
 
         const recordObj = {
             id,
@@ -645,6 +694,8 @@ const defaultRecords = [];
             status,
             rejectReason: status === 'REJECTED' ? rejectReason : '',
             notes,
+            amount,
+            paymentStatus,
             timestamp: new Date().toISOString()
         };
 
@@ -668,6 +719,8 @@ const defaultRecords = [];
         document.getElementById('updateStatusSelect').value = record.status;
         document.getElementById('updateOperatorSelect').value = record.operatorId;
         document.getElementById('updateReasonInput').value = record.rejectReason || '';
+        document.getElementById('updateAmountInput').value = getRecordAmount(record) || '';
+        document.getElementById('updatePaymentSelect').value = record.paymentStatus === 'PAID' ? 'PAID' : 'UNPAID';
 
         const summaryBox = document.getElementById('statusSummaryBox');
         summaryBox.innerHTML = `
@@ -685,12 +738,16 @@ const defaultRecords = [];
         const newStatus = document.getElementById('updateStatusSelect').value;
         const newOperator = document.getElementById('updateOperatorSelect').value;
         const newReason = document.getElementById('updateReasonInput').value.trim();
+        const newAmount = Number(document.getElementById('updateAmountInput').value) || 0;
+        const newPaymentStatus = document.getElementById('updatePaymentSelect').value;
 
         const record = state.records.find(r => r.id === recordId);
         if (record) {
             record.status = newStatus;
             record.operatorId = newOperator;
             record.rejectReason = newStatus === 'REJECTED' ? newReason : '';
+            record.amount = newAmount;
+            record.paymentStatus = newPaymentStatus;
             await saveItemToStore('records', record);
         }
 
@@ -749,9 +806,29 @@ const defaultRecords = [];
             <div class="receipt-row"><span>Retailer Name:</span><strong>${escapeHTML(retName)}</strong></div>
             <div class="receipt-row"><span>Operator Name:</span><strong>${escapeHTML(opName)}</strong></div>
             <div class="receipt-row"><span>Current Status:</span><strong>${record.status} ${record.rejectReason ? `(${record.rejectReason})` : ''}</strong></div>
+            <div class="receipt-row"><span>Payment Amount:</span><strong>${formatAmount(getRecordAmount(record))} (${record.paymentStatus === 'PAID' ? 'Paid' : 'Unpaid'})</strong></div>
         `;
 
         showModal(receiptModal);
+    }
+
+    async function togglePayment(recordId) {
+        const record = state.records.find(r => r.id === recordId);
+        if (!record) return;
+
+        if (!getRecordAmount(record)) {
+            const input = prompt('Operator ko kitna payment dena h? (₹ amount daalein)', '');
+            if (input === null) return;
+            const amount = Number(input);
+            if (!amount || amount < 0) return alert('Sahi amount daalein.');
+            record.amount = amount;
+            record.paymentStatus = 'UNPAID';
+        } else {
+            record.paymentStatus = record.paymentStatus === 'PAID' ? 'UNPAID' : 'PAID';
+        }
+
+        await saveItemToStore('records', record);
+        renderAll();
     }
 
     async function deleteRecord(recordId) {
@@ -793,7 +870,7 @@ const defaultRecords = [];
         if (!state.records.length) return alert('Export karne ke liye koyi record nahi h.');
 
         let csvContent = "data:text/csv;charset=utf-8,";
-        csvContent += "ID,Date,Customer Name,Mobile,Aadhaar/EID,Service,Retailer,Operator,Status,Reject Reason,Notes\n";
+        csvContent += "ID,Date,Customer Name,Mobile,Aadhaar/EID,Service,Retailer,Operator,Status,Reject Reason,Payment Amount,Payment Status,Notes\n";
 
         state.records.forEach(r => {
             const opName = getOperatorName(r.operatorId).replace(/,/g, '');
@@ -809,6 +886,8 @@ const defaultRecords = [];
                 `"${opName}"`,
                 r.status,
                 `"${r.rejectReason || ''}"`,
+                getRecordAmount(r),
+                r.paymentStatus === 'PAID' ? 'PAID' : 'UNPAID',
                 `"${r.notes || ''}"`
             ].join(",");
             csvContent += row + "\n";
@@ -871,6 +950,7 @@ const defaultRecords = [];
         openReceiptModal,
         editRecord: (id) => openEntryModal(state.records.find(r => r.id === id)),
         deleteRecord,
+        togglePayment,
         deleteOperator,
         deleteRetailer
     };

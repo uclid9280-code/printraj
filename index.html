@@ -251,6 +251,7 @@
                                 <th>Service Type</th>
                                 <th>Retailer</th>
                                 <th>Operator</th>
+                                <th>Payment (₹)</th>
                                 <th>Status</th>
                                 <th>Actions</th>
                             </tr>
@@ -418,6 +419,19 @@
                         </select>
                     </div>
 
+                    <div class="form-group">
+                        <label>Operator Payment Amount (₹)</label>
+                        <input type="number" id="entryAmount" min="0" step="1" placeholder="Jaise: 50">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Payment Status</label>
+                        <select id="entryPaymentStatus">
+                            <option value="UNPAID">Unpaid (Baaki) 💰</option>
+                            <option value="PAID">Paid ✅</option>
+                        </select>
+                    </div>
+
                     <div class="form-group full-width" id="rejectReasonGroup" style="display:none;">
                         <label class="danger-text">Rejection Reason (Reject hone ka karan)</label>
                         <input type="text" id="rejectReason" placeholder="Jaise: Demographic Mismatch, Fingerprint fail, etc.">
@@ -464,6 +478,19 @@
                     <label>Operator (Kon process kar raha h)</label>
                     <select id="updateOperatorSelect">
                         <!-- Dynamic -->
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Operator Payment Amount (₹)</label>
+                    <input type="number" id="updateAmountInput" min="0" step="1" placeholder="Jaise: 50">
+                </div>
+
+                <div class="form-group">
+                    <label>Payment Status</label>
+                    <select id="updatePaymentSelect">
+                        <option value="UNPAID">Unpaid (Baaki) 💰</option>
+                        <option value="PAID">Paid ✅</option>
                     </select>
                 </div>
 
