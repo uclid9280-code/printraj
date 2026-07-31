@@ -229,6 +229,10 @@
                             <option value="Address Update">Address Update</option>
                             <option value="Mobile Update">Mobile Update</option>
                             <option value="Biometric Update">Biometric Update</option>
+                            <option value="Demographic Update">Demographic Update</option>
+                            <option value="Name Update">Name Update</option>
+                            <option value="Full Name Update">Full Name Update</option>
+                            <option value="DOB Update">DOB Update</option>
                             <option value="Other">Other Request</option>
                         </select>
                     </div>
@@ -251,6 +255,7 @@
                                 <th>Service Type</th>
                                 <th>Retailer</th>
                                 <th>Operator</th>
+                                <th>Payment (₹)</th>
                                 <th>Status</th>
                                 <th>Actions</th>
                             </tr>
@@ -302,6 +307,18 @@
                 </div>
 
                 <div class="backup-grid">
+                    <div class="backup-card">
+                        <div class="backup-icon blue-icon">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                        </div>
+                        <h3>Auto Sync (Desktop ↔ Mobile)</h3>
+                        <p>Online (cloud) par host karne par kisi bhi mobile se, kahin se bhi wahi data milega — data SQL database me store hota hai. Local desktop par chalane par ek hi WiFi ke device neeche diye URL se judh sakte hain.</p>
+                        <div id="syncUrlsBox" class="status-summary-box">Server URLs load ho rahe hain...</div>
+                        <p><small class="text-muted" id="syncStatusText">Sync status: --</small></p>
+                        <button class="btn btn-primary" id="syncNowBtn">🔄 Abhi Sync Karein</button>
+                        <button class="btn btn-secondary" id="logoutBtn" style="display:none;">🚪 Logout</button>
+                    </div>
+
                     <div class="backup-card">
                         <div class="backup-icon green-icon">
                             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -387,6 +404,9 @@
                             <option value="Mobile Update">Mobile Update</option>
                             <option value="Biometric Update">Biometric Update</option>
                             <option value="Demographic Update">Demographic Update</option>
+                            <option value="Name Update">Name Update</option>
+                            <option value="Full Name Update">Full Name Update</option>
+                            <option value="DOB Update">DOB Update</option>
                         </select>
                     </div>
 
@@ -415,6 +435,19 @@
                             <option value="PENDING">Pending ⏳</option>
                             <option value="SUCCESS">Success ✅</option>
                             <option value="REJECTED">Rejected ❌</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Operator Payment Amount (₹)</label>
+                        <input type="number" id="entryAmount" min="0" step="1" placeholder="Jaise: 50">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Payment Status</label>
+                        <select id="entryPaymentStatus">
+                            <option value="UNPAID">Unpaid (Baaki) 💰</option>
+                            <option value="PAID">Paid ✅</option>
                         </select>
                     </div>
 
@@ -464,6 +497,19 @@
                     <label>Operator (Kon process kar raha h)</label>
                     <select id="updateOperatorSelect">
                         <!-- Dynamic -->
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Operator Payment Amount (₹)</label>
+                    <input type="number" id="updateAmountInput" min="0" step="1" placeholder="Jaise: 50">
+                </div>
+
+                <div class="form-group">
+                    <label>Payment Status</label>
+                    <select id="updatePaymentSelect">
+                        <option value="UNPAID">Unpaid (Baaki) 💰</option>
+                        <option value="PAID">Paid ✅</option>
                     </select>
                 </div>
 
@@ -539,6 +585,26 @@
         </div>
     </div>
 
+    <div id="loginOverlay" class="login-overlay">
+        <div class="login-card">
+            <h2>Aadhaar Portal Login</h2>
+            <p>Cloud data (kisi bhi mobile/desktop par same data) dekhne ke liye login karein.</p>
+            <label>Email</label>
+            <input type="email" id="loginEmail" autocomplete="username" placeholder="aapka email">
+            <label>Password</label>
+            <input type="password" id="loginPassword" autocomplete="current-password" placeholder="password">
+            <button class="btn btn-primary" id="loginBtn">Login</button>
+            <p id="loginError" class="login-error"></p>
+        </div>
+    </div>
+
+    <script>
+        // Cloud (SQL database) settings — inhe badalkar apna Supabase project use kar sakte hain.
+        window.CLOUD_CONFIG = {
+            url: 'https://squrdoimlkoyqbywxqoq.supabase.co',
+            key: 'sb_publishable_W-6oXVaQlS51H1kzq4U67g_3ZQE3Hsk'
+        };
+    </script>
     <script src="app.js"></script>
 </body>
 </html>

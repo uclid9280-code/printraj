@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: aadhaar-tracker
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    envVars:
+      # Supabase (ya koi bhi Postgres) ka connection string Render dashboard me daalein.
+      - key: DATABASE_URL
+        sync: false

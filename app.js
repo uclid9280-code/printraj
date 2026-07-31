@@ -118,6 +118,7 @@ const defaultRecords = [];
 
     function saveArrayToStore(storeName, items) {
         return new Promise((resolve) => {
+            if (!dbInstance) return resolve();
             const tx = dbInstance.transaction(storeName, 'readwrite');
             const store = tx.objectStore(storeName);
             items.forEach(item => store.put(item));
@@ -240,6 +241,282 @@ const defaultRecords = [];
         populateDropdowns();
         renderAll();
         updateDateBadge();
+        initServerSync();
+    }
+
+    // --- Multi Device Sync ---
+    // Cloud mode: data ek SQL (Postgres) database me jata hai, isliye kisi bhi
+    // mobile/desktop par internet se same data milta hai (login zaroori).
+    // Local mode: START_PORTAL.bat se chalane par ek hi WiFi ke devices sync hote hain.
+    const CLOUD = window.CLOUD_CONFIG || {};
+    const CLOUD_ENABLED = Boolean(CLOUD.url && CLOUD.key);
+    const LOCAL_SERVER_SYNC = !CLOUD_ENABLED && (location.protocol === 'http:' || location.protocol === 'https:');
+    const SYNC_INTERVAL_MS = 15000;
+    const SESSION_KEY = 'aadhaar_cloud_session';
+    const SYNC_KINDS = ['records', 'operators', 'retailers'];
+    let syncInFlight = false;
+    let cloudSession = null;
+
+    function stampItem(item) {
+        item.updatedAt = new Date().toISOString();
+        return item;
+    }
+
+    function itemTime(item) {
+        return Date.parse((item && (item.updatedAt || item.timestamp)) || 0) || 0;
+    }
+
+    function setSyncStatus(message) {
+        const elem = document.getElementById('syncStatusText');
+        if (elem) elem.textContent = 'Sync status: ' + message;
+    }
+
+    function loadCloudSession() {
+        try {
+            cloudSession = JSON.parse(localStorage.getItem(SESSION_KEY)) || null;
+        } catch (err) {
+            cloudSession = null;
+        }
+        return cloudSession;
+    }
+
+    function storeCloudSession(session) {
+        cloudSession = session;
+        if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+        else localStorage.removeItem(SESSION_KEY);
+    }
+
+    function showLoginOverlay(show) {
+        const overlay = document.getElementById('loginOverlay');
+        if (overlay) overlay.style.display = show ? 'flex' : 'none';
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (logoutBtn) logoutBtn.style.display = show || !CLOUD_ENABLED ? 'none' : 'inline-flex';
+    }
+
+    async function cloudAuth(body) {
+        const res = await fetch(`${CLOUD.url}/auth/v1/token?grant_type=${body.grant_type}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', apikey: CLOUD.key },
+            body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error_description || data.msg || data.error || 'Login fail');
+        storeCloudSession({ access_token: data.access_token, refresh_token: data.refresh_token });
+        return data;
+    }
+
+    async function cloudLogin(email, password) {
+        return cloudAuth({ grant_type: 'password', email, password });
+    }
+
+    async function cloudRefresh() {
+        if (!cloudSession || !cloudSession.refresh_token) throw new Error('Login zaroori hai');
+        return cloudAuth({ grant_type: 'refresh_token', refresh_token: cloudSession.refresh_token });
+    }
+
+    async function cloudRequest(path, options = {}, allowRetry = true) {
+        if (!cloudSession) throw new Error('Login zaroori hai');
+        const res = await fetch(`${CLOUD.url}/rest/v1/${path}`, {
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                apikey: CLOUD.key,
+                Authorization: 'Bearer ' + cloudSession.access_token,
+                ...(options.headers || {})
+            }
+        });
+
+        if (res.status === 401 && allowRetry) {
+            await cloudRefresh();
+            return cloudRequest(path, options, false);
+        }
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.status === 204 ? null : res.json();
+    }
+
+    async function syncWithCloud(showAlert = false) {
+        if (!cloudSession || syncInFlight) return;
+        syncInFlight = true;
+
+        try {
+            const rows = await cloudRequest('aadhaar_items?select=kind,id,data,updated_at');
+            const pending = [];
+
+            SYNC_KINDS.forEach(kind => {
+                const localMap = new Map(state[kind].map(item => [item.id, item]));
+                const remoteIds = new Set();
+
+                rows.filter(row => row.kind === kind).forEach(row => {
+                    remoteIds.add(row.id);
+                    const local = localMap.get(row.id);
+                    if (!local || itemTime(row.data) > itemTime(local)) localMap.set(row.id, row.data);
+                    else if (itemTime(local) > itemTime(row.data)) pending.push(toCloudRow(kind, local));
+                });
+
+                state[kind].forEach(item => {
+                    if (!remoteIds.has(item.id)) pending.push(toCloudRow(kind, item));
+                });
+
+                state[kind] = Array.from(localMap.values());
+            });
+
+            if (pending.length) {
+                await cloudRequest('aadhaar_items', {
+                    method: 'POST',
+                    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+                    body: JSON.stringify(pending)
+                });
+            }
+
+            state.records.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            await saveArrayToStore('records', state.records);
+            await saveArrayToStore('operators', state.operators);
+            await saveArrayToStore('retailers', state.retailers);
+            syncToLocalStorageBackup();
+            renderAll();
+
+            setSyncStatus('Cloud updated ' + new Date().toLocaleTimeString());
+            if (showAlert) alert('Data sync ho gaya!');
+        } catch (err) {
+            setSyncStatus('Fail (' + err.message + ')');
+            if (err.message === 'Login zaroori hai') showLoginOverlay(true);
+            if (showAlert) alert('Sync fail hua: ' + err.message);
+        } finally {
+            syncInFlight = false;
+        }
+    }
+
+    function toCloudRow(kind, item) {
+        return {
+            kind,
+            id: item.id,
+            data: item,
+            updated_at: new Date(itemTime(item) || Date.now()).toISOString()
+        };
+    }
+
+    function syncNow(showAlert = false) {
+        if (CLOUD_ENABLED) return syncWithCloud(showAlert);
+        return syncWithServer(showAlert);
+    }
+
+    async function initServerSync() {
+        const urlsBox = document.getElementById('syncUrlsBox');
+        const syncNowBtn = document.getElementById('syncNowBtn');
+        if (syncNowBtn) syncNowBtn.addEventListener('click', () => syncNow(true));
+
+        if (CLOUD_ENABLED) return initCloudSync(urlsBox);
+
+        if (!LOCAL_SERVER_SYNC) {
+            if (urlsBox) {
+                urlsBox.innerHTML = 'Auto sync ke liye app ko <strong>START_PORTAL.bat</strong> se kholiye (server mode). File se seedhe kholne par data sirf isi device me rahega.';
+            }
+            setSyncStatus('Band (offline file mode)');
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/info');
+            const info = await res.json();
+            if (urlsBox) {
+                urlsBox.innerHTML = info.urls.map(u => `<div><strong>${escapeHTML(u)}</strong></div>`).join('');
+            }
+        } catch (err) {
+            if (urlsBox) urlsBox.textContent = 'Server URL nahi mila.';
+        }
+
+        await syncNow();
+        setInterval(() => syncWithServer(), SYNC_INTERVAL_MS);
+    }
+
+    async function initCloudSync(urlsBox) {
+        if (urlsBox) {
+            urlsBox.innerHTML = 'Cloud database se juda hai — is app ka URL kisi bhi mobile/desktop me kholiye, login karke wahi data milega.';
+        }
+
+        const loginBtn = document.getElementById('loginBtn');
+        const logoutBtn = document.getElementById('logoutBtn');
+        const loginError = document.getElementById('loginError');
+
+        if (loginBtn) {
+            loginBtn.addEventListener('click', async () => {
+                const email = document.getElementById('loginEmail').value.trim();
+                const password = document.getElementById('loginPassword').value;
+                loginBtn.disabled = true;
+                if (loginError) loginError.textContent = '';
+                try {
+                    await cloudLogin(email, password);
+                    showLoginOverlay(false);
+                    await syncWithCloud();
+                } catch (err) {
+                    if (loginError) loginError.textContent = err.message;
+                } finally {
+                    loginBtn.disabled = false;
+                }
+            });
+        }
+
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', () => {
+                storeCloudSession(null);
+                showLoginOverlay(true);
+                setSyncStatus('Logged out');
+            });
+        }
+
+        loadCloudSession();
+        showLoginOverlay(!cloudSession);
+        if (cloudSession) await syncWithCloud();
+        setInterval(() => syncWithCloud(), SYNC_INTERVAL_MS);
+    }
+
+    async function syncWithServer(showAlert = false) {
+        if (!LOCAL_SERVER_SYNC || syncInFlight) return;
+        syncInFlight = true;
+
+        try {
+            const res = await fetch('/api/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    records: state.records,
+                    operators: state.operators,
+                    retailers: state.retailers
+                })
+            });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+
+            const merged = await res.json();
+            state.records = (merged.records || []).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            state.operators = merged.operators || [];
+            state.retailers = merged.retailers || [];
+
+            await saveArrayToStore('records', state.records);
+            await saveArrayToStore('operators', state.operators);
+            await saveArrayToStore('retailers', state.retailers);
+            syncToLocalStorageBackup();
+            renderAll();
+
+            setSyncStatus('Updated ' + new Date().toLocaleTimeString());
+            if (showAlert) alert('Data sync ho gaya!');
+        } catch (err) {
+            setSyncStatus('Fail (' + err.message + ')');
+            if (showAlert) alert('Sync fail hua: ' + err.message);
+        } finally {
+            syncInFlight = false;
+        }
+    }
+
+    function liveRecords() {
+        return state.records.filter(r => !r.deleted);
+    }
+
+    function liveOperators() {
+        return state.operators.filter(o => !o.deleted);
+    }
+
+    function liveRetailers() {
+        return state.retailers.filter(r => !r.deleted);
     }
 
     function updateDateBadge() {
@@ -378,27 +655,40 @@ const defaultRecords = [];
         const entryOperator = document.getElementById('entryOperator');
         const updateOperatorSelect = document.getElementById('updateOperatorSelect');
 
+        const currentEntryRetailer = entryRetailer.value;
+        const currentEntryOperator = entryOperator.value;
+        const currentUpdateOperator = updateOperatorSelect.value;
+        const currentFilterRetailer = filterRetailer.value;
+        const currentFilterOperator = filterOperator.value;
+
         // Populate Retailer Options
-        const retOptions = state.retailers.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+        const retOptions = liveRetailers().map(r => `<option value="${r.id}">${escapeHTML(r.name)}</option>`).join('');
         entryRetailer.innerHTML = retOptions || '<option value="">No Retailers</option>';
 
-        const filterRetOpts = '<option value="ALL">Sabhi Retailers</option>' + state.retailers.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+        const filterRetOpts = '<option value="ALL">Sabhi Retailers</option>' + retOptions;
         filterRetailer.innerHTML = filterRetOpts;
 
         // Populate Operator Options
-        const opOptions = state.operators.map(o => `<option value="${o.id}">${o.name}</option>`).join('');
+        const opOptions = liveOperators().map(o => `<option value="${o.id}">${escapeHTML(o.name)}</option>`).join('');
         entryOperator.innerHTML = opOptions || '<option value="">No Operators</option>';
         updateOperatorSelect.innerHTML = opOptions;
 
-        const filterOpOpts = '<option value="ALL">Sabhi Operators</option>' + state.operators.map(o => `<option value="${o.id}">${o.name}</option>`).join('');
+        const filterOpOpts = '<option value="ALL">Sabhi Operators</option>' + opOptions;
         filterOperator.innerHTML = filterOpOpts;
+
+        if (currentEntryRetailer) entryRetailer.value = currentEntryRetailer;
+        if (currentEntryOperator) entryOperator.value = currentEntryOperator;
+        if (currentUpdateOperator) updateOperatorSelect.value = currentUpdateOperator;
+        filterRetailer.value = currentFilterRetailer || state.currentFilter.retailer;
+        filterOperator.value = currentFilterOperator || state.currentFilter.operator;
     }
 
     function renderStats() {
-        const total = state.records.length;
-        const pending = state.records.filter(r => r.status === 'PENDING').length;
-        const success = state.records.filter(r => r.status === 'SUCCESS').length;
-        const rejected = state.records.filter(r => r.status === 'REJECTED').length;
+        const records = liveRecords();
+        const total = records.length;
+        const pending = records.filter(r => r.status === 'PENDING').length;
+        const success = records.filter(r => r.status === 'SUCCESS').length;
+        const rejected = records.filter(r => r.status === 'REJECTED').length;
 
         statTotal.textContent = total;
         statPending.textContent = pending;
@@ -425,16 +715,16 @@ const defaultRecords = [];
     }
 
     function renderDashboardTable() {
-        const filtered = filterRecords(state.records).slice(0, 7); // Latest 7
+        const filtered = filterRecords(liveRecords()).slice(0, 7); // Latest 7
         dashboardTableBody.innerHTML = filtered.length ? filtered.map(r => createTableRowHTML(r)).join('') : `
             <tr><td colspan="8" style="text-align:center; padding: 24px; color: var(--text-muted);">Koyi record nahi mila</td></tr>
         `;
     }
 
     function renderMainTable() {
-        const filtered = filterRecords(state.records);
+        const filtered = filterRecords(liveRecords());
         mainTableBody.innerHTML = filtered.length ? filtered.map((r, idx) => createTableRowHTML(r, idx + 1)).join('') : `
-            <tr><td colspan="10" style="text-align:center; padding: 32px; color: var(--text-muted);">Koyi record nahi mila. Filters reset karein ya nayi entry add karein.</td></tr>
+            <tr><td colspan="11" style="text-align:center; padding: 32px; color: var(--text-muted);">Koyi record nahi mila. Filters reset karein ya nayi entry add karein.</td></tr>
         `;
     }
 
@@ -446,17 +736,25 @@ const defaultRecords = [];
             day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
         });
 
-        return `
-            <tr>
-                <td><strong>${index ? '#' + index : record.id}</strong><br><small class="text-muted">${formattedDate}</small></td>
+        const identityCells = index
+            ? `<td><strong>#${index}</strong></td>
+                <td><small class="text-muted">${formattedDate}</small></td>
+                <td><strong>${escapeHTML(record.custName)}</strong></td>
+                <td>📞 ${escapeHTML(record.custMobile)}</td>`
+            : `<td><small class="text-muted">${formattedDate}</small></td>
                 <td>
                     <strong>${escapeHTML(record.custName)}</strong><br>
-                    <small class="text-muted">📞 ${record.custMobile}</small>
-                </td>
+                    <small class="text-muted">📞 ${escapeHTML(record.custMobile)}</small>
+                </td>`;
+
+        return `
+            <tr>
+                ${identityCells}
                 <td><code>${escapeHTML(record.aadhaarNumber || 'N/A')}</code></td>
                 <td><span class="person-tag">${escapeHTML(record.serviceType)}</span></td>
                 <td><span class="person-tag">🏪 ${escapeHTML(retName)}</span></td>
                 <td><span class="person-tag">👤 ${escapeHTML(opName)}</span></td>
+                ${index ? `<td>${getPaymentBadgeHTML(record)}</td>` : ''}
                 <td>${statusBadge}</td>
                 <td>
                     <div class="action-btns">
@@ -468,6 +766,9 @@ const defaultRecords = [];
                         </button>
                         <button class="icon-action" onclick="app.editRecord('${record.id}')" title="Edit Entry">
                             ✏️
+                        </button>
+                        <button class="icon-action" onclick="app.togglePayment('${record.id}')" title="Payment Paid / Unpaid">
+                            💰
                         </button>
                         <button class="icon-action" onclick="app.deleteRecord('${record.id}')" title="Delete">
                             🗑️
@@ -489,11 +790,31 @@ const defaultRecords = [];
         return status;
     }
 
+    function getRecordAmount(record) {
+        const amount = Number(record.amount);
+        return isNaN(amount) ? 0 : amount;
+    }
+
+    function formatAmount(amount) {
+        return '₹' + Number(amount || 0).toLocaleString('hi-IN');
+    }
+
+    function getPaymentBadgeHTML(record) {
+        const amount = getRecordAmount(record);
+        if (!amount) return '<span class="text-muted">—</span>';
+        const isPaid = record.paymentStatus === 'PAID';
+        return `<strong>${formatAmount(amount)}</strong><br>
+            <span class="status-badge ${isPaid ? 'success' : 'pending'}">${isPaid ? '✅ Paid' : '⏳ Unpaid'}</span>`;
+    }
+
     function renderOperatorsGrid() {
         const grid = document.getElementById('operatorsGrid');
-        grid.innerHTML = state.operators.map(op => {
-            const opRecords = state.records.filter(r => r.operatorId === op.id);
+        grid.innerHTML = liveOperators().map(op => {
+            const opRecords = liveRecords().filter(r => r.operatorId === op.id);
             const successCount = opRecords.filter(r => r.status === 'SUCCESS').length;
+            const totalAmount = opRecords.reduce((sum, r) => sum + getRecordAmount(r), 0);
+            const paidAmount = opRecords.filter(r => r.paymentStatus === 'PAID').reduce((sum, r) => sum + getRecordAmount(r), 0);
+            const dueAmount = totalAmount - paidAmount;
 
             return `
                 <div class="person-card">
@@ -513,6 +834,18 @@ const defaultRecords = [];
                             <span>Success Slips</span>
                             <h4 class="success-text">${successCount}</h4>
                         </div>
+                        <div class="p-stat">
+                            <span>Total Payment</span>
+                            <h4>${formatAmount(totalAmount)}</h4>
+                        </div>
+                        <div class="p-stat">
+                            <span>Paid</span>
+                            <h4 class="success-text">${formatAmount(paidAmount)}</h4>
+                        </div>
+                        <div class="p-stat">
+                            <span>Baaki (Due)</span>
+                            <h4 class="danger-text">${formatAmount(dueAmount)}</h4>
+                        </div>
                     </div>
                     <div style="margin-top: 14px; text-align: right;">
                         <button class="btn btn-danger-outline btn-sm" onclick="app.deleteOperator('${op.id}')">
@@ -526,8 +859,8 @@ const defaultRecords = [];
 
     function renderRetailersGrid() {
         const grid = document.getElementById('retailersGrid');
-        grid.innerHTML = state.retailers.map(ret => {
-            const retRecords = state.records.filter(r => r.retailerId === ret.id);
+        grid.innerHTML = liveRetailers().map(ret => {
+            const retRecords = liveRecords().filter(r => r.retailerId === ret.id);
             const successCount = retRecords.filter(r => r.status === 'SUCCESS').length;
 
             return `
@@ -596,6 +929,8 @@ const defaultRecords = [];
         const rejectReason = document.getElementById('rejectReason');
         const rejectReasonGroup = document.getElementById('rejectReasonGroup');
         const entryNotes = document.getElementById('entryNotes');
+        const entryAmount = document.getElementById('entryAmount');
+        const entryPaymentStatus = document.getElementById('entryPaymentStatus');
 
         if (editRecord) {
             modalTitle.textContent = 'Aadhaar Record Edit Karein';
@@ -610,10 +945,15 @@ const defaultRecords = [];
             rejectReason.value = editRecord.rejectReason || '';
             rejectReasonGroup.style.display = editRecord.status === 'REJECTED' ? 'block' : 'none';
             entryNotes.value = editRecord.notes || '';
+            entryAmount.value = getRecordAmount(editRecord) || '';
+            entryPaymentStatus.value = editRecord.paymentStatus === 'PAID' ? 'PAID' : 'UNPAID';
         } else {
             modalTitle.textContent = 'Nayi Aadhaar Entry / Slip Request Add Karein';
             entryForm.reset();
             entryId.value = '';
+            entryStatus.value = 'PENDING';
+            entryAmount.value = '';
+            entryPaymentStatus.value = 'UNPAID';
             rejectReasonGroup.style.display = 'none';
         }
 
@@ -633,6 +973,8 @@ const defaultRecords = [];
         const status = document.getElementById('entryStatus').value;
         const rejectReason = document.getElementById('rejectReason').value.trim();
         const notes = document.getElementById('entryNotes').value.trim();
+        const amount = Number(document.getElementById('entryAmount').value) || 0;
+        const paymentStatus = document.getElementById('entryPaymentStatus').value;
 
         const recordObj = {
             id,
@@ -645,6 +987,8 @@ const defaultRecords = [];
             status,
             rejectReason: status === 'REJECTED' ? rejectReason : '',
             notes,
+            amount,
+            paymentStatus,
             timestamp: new Date().toISOString()
         };
 
@@ -655,9 +999,11 @@ const defaultRecords = [];
             state.records.unshift(recordObj);
         }
 
+        stampItem(recordObj);
         await saveItemToStore('records', recordObj);
         hideModal(entryModal);
         renderAll();
+        syncNow();
     }
 
     function openStatusModal(recordId) {
@@ -668,6 +1014,8 @@ const defaultRecords = [];
         document.getElementById('updateStatusSelect').value = record.status;
         document.getElementById('updateOperatorSelect').value = record.operatorId;
         document.getElementById('updateReasonInput').value = record.rejectReason || '';
+        document.getElementById('updateAmountInput').value = getRecordAmount(record) || '';
+        document.getElementById('updatePaymentSelect').value = record.paymentStatus === 'PAID' ? 'PAID' : 'UNPAID';
 
         const summaryBox = document.getElementById('statusSummaryBox');
         summaryBox.innerHTML = `
@@ -685,17 +1033,22 @@ const defaultRecords = [];
         const newStatus = document.getElementById('updateStatusSelect').value;
         const newOperator = document.getElementById('updateOperatorSelect').value;
         const newReason = document.getElementById('updateReasonInput').value.trim();
+        const newAmount = Number(document.getElementById('updateAmountInput').value) || 0;
+        const newPaymentStatus = document.getElementById('updatePaymentSelect').value;
 
         const record = state.records.find(r => r.id === recordId);
         if (record) {
             record.status = newStatus;
             record.operatorId = newOperator;
             record.rejectReason = newStatus === 'REJECTED' ? newReason : '';
-            await saveItemToStore('records', record);
+            record.amount = newAmount;
+            record.paymentStatus = newPaymentStatus;
+            await saveItemToStore('records', stampItem(record));
         }
 
         hideModal(statusModal);
         renderAll();
+        syncNow();
     }
 
     function openPersonModal(type) {
@@ -719,6 +1072,8 @@ const defaultRecords = [];
             location
         };
 
+        stampItem(personObj);
+
         if (type === 'OPERATOR') {
             state.operators.push(personObj);
             await saveItemToStore('operators', personObj);
@@ -729,6 +1084,7 @@ const defaultRecords = [];
 
         hideModal(personModal);
         renderAll();
+        syncNow();
     }
 
     function openReceiptModal(recordId) {
@@ -749,38 +1105,69 @@ const defaultRecords = [];
             <div class="receipt-row"><span>Retailer Name:</span><strong>${escapeHTML(retName)}</strong></div>
             <div class="receipt-row"><span>Operator Name:</span><strong>${escapeHTML(opName)}</strong></div>
             <div class="receipt-row"><span>Current Status:</span><strong>${record.status} ${record.rejectReason ? `(${record.rejectReason})` : ''}</strong></div>
+            <div class="receipt-row"><span>Payment Amount:</span><strong>${formatAmount(getRecordAmount(record))} (${record.paymentStatus === 'PAID' ? 'Paid' : 'Unpaid'})</strong></div>
         `;
 
         showModal(receiptModal);
     }
 
+    async function togglePayment(recordId) {
+        const record = state.records.find(r => r.id === recordId);
+        if (!record) return;
+
+        if (!getRecordAmount(record)) {
+            const input = prompt('Operator ko kitna payment dena h? (₹ amount daalein)', '');
+            if (input === null) return;
+            const amount = Number(input);
+            if (!amount || amount < 0) return alert('Sahi amount daalein.');
+            record.amount = amount;
+            record.paymentStatus = 'UNPAID';
+        } else {
+            record.paymentStatus = record.paymentStatus === 'PAID' ? 'UNPAID' : 'PAID';
+        }
+
+        await saveItemToStore('records', stampItem(record));
+        renderAll();
+        syncNow();
+    }
+
+    // Delete ko soft-delete rakha gaya hai taki dusre device par sync hote waqt
+    // hataya hua item wapas na aa jaye.
+    async function softDelete(storeName, list, id) {
+        const item = list.find(entry => entry.id === id);
+        if (!item) return;
+        item.deleted = true;
+        await saveItemToStore(storeName, stampItem(item));
+        renderAll();
+        syncNow();
+    }
+
     async function deleteRecord(recordId) {
         if (confirm('Kya aap sach me iss record ko delete karna chahte hain?')) {
-            state.records = state.records.filter(r => r.id !== recordId);
-            await removeItemFromStore('records', recordId);
-            renderAll();
+            await softDelete('records', state.records, recordId);
         }
     }
 
     async function deleteOperator(opId) {
         if (confirm('Kya aap iss Operator ko delete karna chahte hain?')) {
-            state.operators = state.operators.filter(o => o.id !== opId);
-            await removeItemFromStore('operators', opId);
-            renderAll();
+            await softDelete('operators', state.operators, opId);
         }
     }
 
     async function deleteRetailer(retId) {
         if (confirm('Kya aap iss Retailer ko delete karna chahte hain?')) {
-            state.retailers = state.retailers.filter(r => r.id !== retId);
-            await removeItemFromStore('retailers', retId);
-            renderAll();
+            await softDelete('retailers', state.retailers, retId);
         }
     }
 
     // --- Export / Import Backup ---
     function exportFullBackupJSON() {
-        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state, null, 2));
+        const backup = {
+            records: liveRecords(),
+            operators: liveOperators(),
+            retailers: liveRetailers()
+        };
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backup, null, 2));
         const downloadAnchor = document.createElement('a');
         downloadAnchor.setAttribute("href", dataStr);
         downloadAnchor.setAttribute("download", `Aadhaar_Tracker_Backup_${new Date().toISOString().slice(0, 10)}.json`);
@@ -790,17 +1177,18 @@ const defaultRecords = [];
     }
 
     function exportRecordsCSV() {
-        if (!state.records.length) return alert('Export karne ke liye koyi record nahi h.');
+        const records = liveRecords();
+        if (!records.length) return alert('Export karne ke liye koyi record nahi h.');
 
         let csvContent = "data:text/csv;charset=utf-8,";
-        csvContent += "ID,Date,Customer Name,Mobile,Aadhaar/EID,Service,Retailer,Operator,Status,Reject Reason,Notes\n";
+        csvContent += "ID,Date,Customer Name,Mobile,Aadhaar/EID,Service,Retailer,Operator,Status,Reject Reason,Payment Amount,Payment Status,Notes\n";
 
-        state.records.forEach(r => {
+        records.forEach(r => {
             const opName = getOperatorName(r.operatorId).replace(/,/g, '');
             const retName = getRetailerName(r.retailerId).replace(/,/g, '');
             const row = [
                 r.id,
-                new Date(r.timestamp).toLocaleString(),
+                `"${new Date(r.timestamp).toLocaleString()}"`,
                 `"${r.custName}"`,
                 r.custMobile,
                 `"${r.aadhaarNumber || ''}"`,
@@ -809,6 +1197,8 @@ const defaultRecords = [];
                 `"${opName}"`,
                 r.status,
                 `"${r.rejectReason || ''}"`,
+                getRecordAmount(r),
+                r.paymentStatus === 'PAID' ? 'PAID' : 'UNPAID',
                 `"${r.notes || ''}"`
             ].join(",");
             csvContent += row + "\n";
@@ -842,6 +1232,7 @@ const defaultRecords = [];
 
                     alert('Backup successfully restore ho gaya!');
                     renderAll();
+                    syncNow();
                 } else {
                     alert('Invalid Backup File Format');
                 }
@@ -854,13 +1245,14 @@ const defaultRecords = [];
 
     async function handleClearData() {
         if (confirm('DHYAN DEIN: Saara local data delete ho jayega. Kya aap aage badhna chahte hain?')) {
-            state.records = [];
-            if (dbInstance) {
-                const tx = dbInstance.transaction(['records'], 'readwrite');
-                tx.objectStore('records').clear();
-            }
-            localStorage.removeItem('aadhaar_records');
+            state.records.forEach(r => {
+                r.deleted = true;
+                stampItem(r);
+            });
+            await saveArrayToStore('records', state.records);
+            syncToLocalStorageBackup();
             renderAll();
+            await syncNow();
             alert('Saara data clear kar diya gaya hai.');
         }
     }
@@ -871,6 +1263,7 @@ const defaultRecords = [];
         openReceiptModal,
         editRecord: (id) => openEntryModal(state.records.find(r => r.id === id)),
         deleteRecord,
+        togglePayment,
         deleteOperator,
         deleteRetailer
     };
