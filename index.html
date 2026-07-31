@@ -229,6 +229,10 @@
                             <option value="Address Update">Address Update</option>
                             <option value="Mobile Update">Mobile Update</option>
                             <option value="Biometric Update">Biometric Update</option>
+                            <option value="Demographic Update">Demographic Update</option>
+                            <option value="Name Update">Name Update</option>
+                            <option value="Full Name Update">Full Name Update</option>
+                            <option value="DOB Update">DOB Update</option>
                             <option value="Other">Other Request</option>
                         </select>
                     </div>
@@ -303,6 +307,17 @@
                 </div>
 
                 <div class="backup-grid">
+                    <div class="backup-card">
+                        <div class="backup-icon blue-icon">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                        </div>
+                        <h3>Auto Sync (Desktop ↔ Mobile)</h3>
+                        <p>Ek hi WiFi par mobile me neeche diya URL kholiye — desktop par save kiya data apne aap mobile me aa jayega aur mobile ka data desktop me.</p>
+                        <div id="syncUrlsBox" class="status-summary-box">Server URLs load ho rahe hain...</div>
+                        <p><small class="text-muted" id="syncStatusText">Sync status: --</small></p>
+                        <button class="btn btn-primary" id="syncNowBtn">🔄 Abhi Sync Karein</button>
+                    </div>
+
                     <div class="backup-card">
                         <div class="backup-icon green-icon">
                             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -388,6 +403,9 @@
                             <option value="Mobile Update">Mobile Update</option>
                             <option value="Biometric Update">Biometric Update</option>
                             <option value="Demographic Update">Demographic Update</option>
+                            <option value="Name Update">Name Update</option>
+                            <option value="Full Name Update">Full Name Update</option>
+                            <option value="DOB Update">DOB Update</option>
                         </select>
                     </div>
 
