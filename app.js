@@ -661,6 +661,9 @@ const defaultRecords = [];
             modalTitle.textContent = 'Nayi Aadhaar Entry / Slip Request Add Karein';
             entryForm.reset();
             entryId.value = '';
+            entryStatus.value = 'PENDING';
+            entryAmount.value = '';
+            entryPaymentStatus.value = 'UNPAID';
             rejectReasonGroup.style.display = 'none';
         }
 
@@ -877,7 +880,7 @@ const defaultRecords = [];
             const retName = getRetailerName(r.retailerId).replace(/,/g, '');
             const row = [
                 r.id,
-                new Date(r.timestamp).toLocaleString(),
+                `"${new Date(r.timestamp).toLocaleString()}"`,
                 `"${r.custName}"`,
                 r.custMobile,
                 `"${r.aadhaarNumber || ''}"`,
