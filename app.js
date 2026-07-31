@@ -244,14 +244,26 @@ const defaultRecords = [];
         initServerSync();
     }
 
-    // --- Multi Device Sync (Desktop <-> Mobile, same WiFi) ---
-    const SYNC_ENABLED = location.protocol === 'http:' || location.protocol === 'https:';
+    // --- Multi Device Sync ---
+    // Cloud mode: data ek SQL (Postgres) database me jata hai, isliye kisi bhi
+    // mobile/desktop par internet se same data milta hai (login zaroori).
+    // Local mode: START_PORTAL.bat se chalane par ek hi WiFi ke devices sync hote hain.
+    const CLOUD = window.CLOUD_CONFIG || {};
+    const CLOUD_ENABLED = Boolean(CLOUD.url && CLOUD.key);
+    const LOCAL_SERVER_SYNC = !CLOUD_ENABLED && (location.protocol === 'http:' || location.protocol === 'https:');
     const SYNC_INTERVAL_MS = 15000;
+    const SESSION_KEY = 'aadhaar_cloud_session';
+    const SYNC_KINDS = ['records', 'operators', 'retailers'];
     let syncInFlight = false;
+    let cloudSession = null;
 
     function stampItem(item) {
         item.updatedAt = new Date().toISOString();
         return item;
+    }
+
+    function itemTime(item) {
+        return Date.parse((item && (item.updatedAt || item.timestamp)) || 0) || 0;
     }
 
     function setSyncStatus(message) {
@@ -259,12 +271,143 @@ const defaultRecords = [];
         if (elem) elem.textContent = 'Sync status: ' + message;
     }
 
+    function loadCloudSession() {
+        try {
+            cloudSession = JSON.parse(localStorage.getItem(SESSION_KEY)) || null;
+        } catch (err) {
+            cloudSession = null;
+        }
+        return cloudSession;
+    }
+
+    function storeCloudSession(session) {
+        cloudSession = session;
+        if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+        else localStorage.removeItem(SESSION_KEY);
+    }
+
+    function showLoginOverlay(show) {
+        const overlay = document.getElementById('loginOverlay');
+        if (overlay) overlay.style.display = show ? 'flex' : 'none';
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (logoutBtn) logoutBtn.style.display = show || !CLOUD_ENABLED ? 'none' : 'inline-flex';
+    }
+
+    async function cloudAuth(body) {
+        const res = await fetch(`${CLOUD.url}/auth/v1/token?grant_type=${body.grant_type}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', apikey: CLOUD.key },
+            body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error_description || data.msg || data.error || 'Login fail');
+        storeCloudSession({ access_token: data.access_token, refresh_token: data.refresh_token });
+        return data;
+    }
+
+    async function cloudLogin(email, password) {
+        return cloudAuth({ grant_type: 'password', email, password });
+    }
+
+    async function cloudRefresh() {
+        if (!cloudSession || !cloudSession.refresh_token) throw new Error('Login zaroori hai');
+        return cloudAuth({ grant_type: 'refresh_token', refresh_token: cloudSession.refresh_token });
+    }
+
+    async function cloudRequest(path, options = {}, allowRetry = true) {
+        if (!cloudSession) throw new Error('Login zaroori hai');
+        const res = await fetch(`${CLOUD.url}/rest/v1/${path}`, {
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                apikey: CLOUD.key,
+                Authorization: 'Bearer ' + cloudSession.access_token,
+                ...(options.headers || {})
+            }
+        });
+
+        if (res.status === 401 && allowRetry) {
+            await cloudRefresh();
+            return cloudRequest(path, options, false);
+        }
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.status === 204 ? null : res.json();
+    }
+
+    async function syncWithCloud(showAlert = false) {
+        if (!cloudSession || syncInFlight) return;
+        syncInFlight = true;
+
+        try {
+            const rows = await cloudRequest('aadhaar_items?select=kind,id,data,updated_at');
+            const pending = [];
+
+            SYNC_KINDS.forEach(kind => {
+                const localMap = new Map(state[kind].map(item => [item.id, item]));
+                const remoteIds = new Set();
+
+                rows.filter(row => row.kind === kind).forEach(row => {
+                    remoteIds.add(row.id);
+                    const local = localMap.get(row.id);
+                    if (!local || itemTime(row.data) > itemTime(local)) localMap.set(row.id, row.data);
+                    else if (itemTime(local) > itemTime(row.data)) pending.push(toCloudRow(kind, local));
+                });
+
+                state[kind].forEach(item => {
+                    if (!remoteIds.has(item.id)) pending.push(toCloudRow(kind, item));
+                });
+
+                state[kind] = Array.from(localMap.values());
+            });
+
+            if (pending.length) {
+                await cloudRequest('aadhaar_items', {
+                    method: 'POST',
+                    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+                    body: JSON.stringify(pending)
+                });
+            }
+
+            state.records.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            await saveArrayToStore('records', state.records);
+            await saveArrayToStore('operators', state.operators);
+            await saveArrayToStore('retailers', state.retailers);
+            syncToLocalStorageBackup();
+            renderAll();
+
+            setSyncStatus('Cloud updated ' + new Date().toLocaleTimeString());
+            if (showAlert) alert('Data sync ho gaya!');
+        } catch (err) {
+            setSyncStatus('Fail (' + err.message + ')');
+            if (err.message === 'Login zaroori hai') showLoginOverlay(true);
+            if (showAlert) alert('Sync fail hua: ' + err.message);
+        } finally {
+            syncInFlight = false;
+        }
+    }
+
+    function toCloudRow(kind, item) {
+        return {
+            kind,
+            id: item.id,
+            data: item,
+            updated_at: new Date(itemTime(item) || Date.now()).toISOString()
+        };
+    }
+
+    function syncNow(showAlert = false) {
+        if (CLOUD_ENABLED) return syncWithCloud(showAlert);
+        return syncWithServer(showAlert);
+    }
+
     async function initServerSync() {
         const urlsBox = document.getElementById('syncUrlsBox');
         const syncNowBtn = document.getElementById('syncNowBtn');
-        if (syncNowBtn) syncNowBtn.addEventListener('click', () => syncWithServer(true));
+        if (syncNowBtn) syncNowBtn.addEventListener('click', () => syncNow(true));
 
-        if (!SYNC_ENABLED) {
+        if (CLOUD_ENABLED) return initCloudSync(urlsBox);
+
+        if (!LOCAL_SERVER_SYNC) {
             if (urlsBox) {
                 urlsBox.innerHTML = 'Auto sync ke liye app ko <strong>START_PORTAL.bat</strong> se kholiye (server mode). File se seedhe kholne par data sirf isi device me rahega.';
             }
@@ -282,12 +425,53 @@ const defaultRecords = [];
             if (urlsBox) urlsBox.textContent = 'Server URL nahi mila.';
         }
 
-        await syncWithServer();
+        await syncNow();
         setInterval(() => syncWithServer(), SYNC_INTERVAL_MS);
     }
 
+    async function initCloudSync(urlsBox) {
+        if (urlsBox) {
+            urlsBox.innerHTML = 'Cloud database se juda hai — is app ka URL kisi bhi mobile/desktop me kholiye, login karke wahi data milega.';
+        }
+
+        const loginBtn = document.getElementById('loginBtn');
+        const logoutBtn = document.getElementById('logoutBtn');
+        const loginError = document.getElementById('loginError');
+
+        if (loginBtn) {
+            loginBtn.addEventListener('click', async () => {
+                const email = document.getElementById('loginEmail').value.trim();
+                const password = document.getElementById('loginPassword').value;
+                loginBtn.disabled = true;
+                if (loginError) loginError.textContent = '';
+                try {
+                    await cloudLogin(email, password);
+                    showLoginOverlay(false);
+                    await syncWithCloud();
+                } catch (err) {
+                    if (loginError) loginError.textContent = err.message;
+                } finally {
+                    loginBtn.disabled = false;
+                }
+            });
+        }
+
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', () => {
+                storeCloudSession(null);
+                showLoginOverlay(true);
+                setSyncStatus('Logged out');
+            });
+        }
+
+        loadCloudSession();
+        showLoginOverlay(!cloudSession);
+        if (cloudSession) await syncWithCloud();
+        setInterval(() => syncWithCloud(), SYNC_INTERVAL_MS);
+    }
+
     async function syncWithServer(showAlert = false) {
-        if (!SYNC_ENABLED || syncInFlight) return;
+        if (!LOCAL_SERVER_SYNC || syncInFlight) return;
         syncInFlight = true;
 
         try {
@@ -817,7 +1001,7 @@ const defaultRecords = [];
         await saveItemToStore('records', recordObj);
         hideModal(entryModal);
         renderAll();
-        syncWithServer();
+        syncNow();
     }
 
     function openStatusModal(recordId) {
@@ -862,7 +1046,7 @@ const defaultRecords = [];
 
         hideModal(statusModal);
         renderAll();
-        syncWithServer();
+        syncNow();
     }
 
     function openPersonModal(type) {
@@ -898,7 +1082,7 @@ const defaultRecords = [];
 
         hideModal(personModal);
         renderAll();
-        syncWithServer();
+        syncNow();
     }
 
     function openReceiptModal(recordId) {
@@ -942,7 +1126,7 @@ const defaultRecords = [];
 
         await saveItemToStore('records', stampItem(record));
         renderAll();
-        syncWithServer();
+        syncNow();
     }
 
     // Delete ko soft-delete rakha gaya hai taki dusre device par sync hote waqt
@@ -953,7 +1137,7 @@ const defaultRecords = [];
         item.deleted = true;
         await saveItemToStore(storeName, stampItem(item));
         renderAll();
-        syncWithServer();
+        syncNow();
     }
 
     async function deleteRecord(recordId) {
@@ -1046,7 +1230,7 @@ const defaultRecords = [];
 
                     alert('Backup successfully restore ho gaya!');
                     renderAll();
-                    syncWithServer();
+                    syncNow();
                 } else {
                     alert('Invalid Backup File Format');
                 }
@@ -1066,7 +1250,7 @@ const defaultRecords = [];
             await saveArrayToStore('records', state.records);
             syncToLocalStorageBackup();
             renderAll();
-            await syncWithServer();
+            await syncNow();
             alert('Saara data clear kar diya gaya hai.');
         }
     }

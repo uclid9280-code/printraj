@@ -970,3 +970,59 @@ body {
         grid-template-columns: 1fr;
     }
 }
+
+/* Cloud Login Overlay */
+.login-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.75);
+    z-index: 2000;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+}
+
+.login-card {
+    background: var(--card-bg, #fff);
+    color: var(--text-color, #0f172a);
+    width: 100%;
+    max-width: 380px;
+    padding: 28px;
+    border-radius: 14px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+}
+
+.login-card h2 {
+    margin: 0 0 8px 0;
+}
+
+.login-card label {
+    display: block;
+    margin: 14px 0 6px 0;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.login-card input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color, #d8dee9);
+    border-radius: 8px;
+    font-size: 14px;
+    background: transparent;
+    color: inherit;
+}
+
+.login-card .btn {
+    width: 100%;
+    margin-top: 18px;
+    justify-content: center;
+}
+
+.login-error {
+    color: #dc2626;
+    font-size: 13px;
+    min-height: 18px;
+    margin: 10px 0 0 0;
+}

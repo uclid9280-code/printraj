@@ -316,6 +316,7 @@
                         <div id="syncUrlsBox" class="status-summary-box">Server URLs load ho rahe hain...</div>
                         <p><small class="text-muted" id="syncStatusText">Sync status: --</small></p>
                         <button class="btn btn-primary" id="syncNowBtn">🔄 Abhi Sync Karein</button>
+                        <button class="btn btn-secondary" id="logoutBtn" style="display:none;">🚪 Logout</button>
                     </div>
 
                     <div class="backup-card">
@@ -584,6 +585,26 @@
         </div>
     </div>
 
+    <div id="loginOverlay" class="login-overlay">
+        <div class="login-card">
+            <h2>Aadhaar Portal Login</h2>
+            <p>Cloud data (kisi bhi mobile/desktop par same data) dekhne ke liye login karein.</p>
+            <label>Email</label>
+            <input type="email" id="loginEmail" autocomplete="username" placeholder="aapka email">
+            <label>Password</label>
+            <input type="password" id="loginPassword" autocomplete="current-password" placeholder="password">
+            <button class="btn btn-primary" id="loginBtn">Login</button>
+            <p id="loginError" class="login-error"></p>
+        </div>
+    </div>
+
+    <script>
+        // Cloud (SQL database) settings — inhe badalkar apna Supabase project use kar sakte hain.
+        window.CLOUD_CONFIG = {
+            url: 'https://squrdoimlkoyqbywxqoq.supabase.co',
+            key: 'sb_publishable_W-6oXVaQlS51H1kzq4U67g_3ZQE3Hsk'
+        };
+    </script>
     <script src="app.js"></script>
 </body>
 </html>
