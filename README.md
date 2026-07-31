@@ -12,7 +12,21 @@ Phir browser me `http://localhost:5173` kholiye (Windows par `START_PORTAL.bat` 
 Bina `DATABASE_URL` ke data server ke folder me `data.json` file me save hota hai, aur ek hi WiFi ke
 mobile bhi Backup tab me dikhne wale network URL se judh sakte hain.
 
-## Online (kisi bhi mobile se, kahin se bhi) — SQL database ke saath
+## Online (kisi bhi mobile se, kahin se bhi) — Supabase SQL + GitHub Pages
+
+App `index.html` me diye `window.CLOUD_CONFIG` (Supabase project URL + publishable key)
+se seedha Supabase se baat karta hai, isliye kisi server ki zaroorat nahi — sirf static
+hosting chahiye:
+
+1. GitHub par repo ki **Settings → Pages → Source: Deploy from a branch → `main` / root** karein.
+2. Kuch minute me app `https://<username>.github.io/printraj/` par live ho jayega.
+3. Kisi bhi mobile/desktop me wo URL kholiye, email + password se login kariye — sab jagah
+   ek hi data (Supabase SQL database) dikhega.
+
+Data table: `public.aadhaar_items` (RLS on, sirf logged-in user ko access).
+Naya user Supabase dashboard → Authentication → Users se add kar sakte hain.
+
+## Apna khud ka Node server (optional) — SQL database ke saath
 
 Server `DATABASE_URL` set hone par Postgres (SQL) use karta hai — table `aadhaar_items`
 apne aap ban jati hai.
