@@ -1,0 +1,16 @@
+{
+  "name": "aadhaar-tracker-portal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Aadhaar operations and slip request tracking portal",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "pg": "^8.11.5"
+  }
+}
