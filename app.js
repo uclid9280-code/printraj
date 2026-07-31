@@ -242,6 +242,39 @@ const defaultRecords = [];
         renderAll();
         updateDateBadge();
         initServerSync();
+        initInstallPrompt();
+    }
+
+    // --- Install (PWA) ---
+    // Service worker sirf http/https par register hota hai; file:// se kholne par skip.
+    function initInstallPrompt() {
+        if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+            navigator.serviceWorker.register('sw.js').catch(() => {});
+        }
+
+        const installBtn = document.getElementById('installAppBtn');
+        if (!installBtn) return;
+
+        let deferredPrompt = null;
+
+        window.addEventListener('beforeinstallprompt', e => {
+            e.preventDefault();
+            deferredPrompt = e;
+            installBtn.style.display = '';
+        });
+
+        installBtn.addEventListener('click', async () => {
+            if (!deferredPrompt) return;
+            deferredPrompt.prompt();
+            await deferredPrompt.userChoice;
+            deferredPrompt = null;
+            installBtn.style.display = 'none';
+        });
+
+        window.addEventListener('appinstalled', () => {
+            deferredPrompt = null;
+            installBtn.style.display = 'none';
+        });
     }
 
     // --- Multi Device Sync ---

@@ -119,6 +119,13 @@ body {
     align-items: center;
     justify-content: center;
     box-shadow: var(--shadow-glow);
+    overflow: hidden;
+}
+
+.brand-logo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 
 .brand-logo.sm {
@@ -995,6 +1002,12 @@ body {
 
 .login-card h2 {
     margin: 0 0 8px 0;
+}
+
+.login-logo {
+    display: block;
+    margin: 0 auto 14px auto;
+    border-radius: 16px;
 }
 
 .login-card label {
