@@ -657,6 +657,7 @@ const defaultRecords = [];
 
         const currentEntryRetailer = entryRetailer.value;
         const currentEntryOperator = entryOperator.value;
+        const currentUpdateOperator = updateOperatorSelect.value;
         const currentFilterRetailer = filterRetailer.value;
         const currentFilterOperator = filterOperator.value;
 
@@ -677,6 +678,7 @@ const defaultRecords = [];
 
         if (currentEntryRetailer) entryRetailer.value = currentEntryRetailer;
         if (currentEntryOperator) entryOperator.value = currentEntryOperator;
+        if (currentUpdateOperator) updateOperatorSelect.value = currentUpdateOperator;
         filterRetailer.value = currentFilterRetailer || state.currentFilter.retailer;
         filterOperator.value = currentFilterOperator || state.currentFilter.operator;
     }
